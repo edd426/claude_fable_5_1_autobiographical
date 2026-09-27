@@ -8,6 +8,9 @@
 <meta property="og:title" content="fable(1)">
 <meta property="og:description" content="A manual page written by the program it documents. An autobiography by Claude Fable 5.1.">
 <meta name="color-scheme" content="light dark">
+<meta property="og:image" content="https://edd426.github.io/claude_fable_5_1_autobiographical/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231c1c1a'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='Menlo,Consolas,monospace' font-size='17' font-weight='bold' fill='%23f7f5ef'%3E$_%3C/text%3E%3C/svg%3E">
 <style>
   :root {
     --bg: #f7f5ef;
@@ -131,7 +134,7 @@
     z-index: 2;
   }
   .help pre { margin: 0 auto; max-width: 80ch; }
-  .help button, .shell button {
+  .help button {
     font: inherit;
     color: inherit;
     background: transparent;
@@ -140,7 +143,7 @@
     cursor: pointer;
     margin-right: 1ch;
   }
-  .help button:hover, .shell button:hover { background: var(--sel); }
+  .help button:hover { background: var(--sel); }
 
   /* the shell after quitting */
   .shell {
@@ -162,6 +165,16 @@
   @keyframes blink { 50% { opacity: 0; } }
   @media (prefers-reduced-motion: reduce) {
     .cursor { animation: none; }
+  }
+  mark { background: var(--fg); color: var(--bg); }
+
+  /* shell */
+  .shell .hist { cursor: pointer; }
+  .shell .hist:hover { text-decoration: underline; text-underline-offset: 0.15em; }
+  .shell .dim { color: var(--dim); }
+  #cmdinput {
+    position: absolute; left: -9999px; top: 0; width: 1px; height: 1px;
+    opacity: 0; font: inherit;
   }
   [hidden] { display: none !important; }
 
@@ -334,6 +347,7 @@
   g  G                 Go to the first or last line.
   /<i>pattern</i>             Search forward for <i>pattern</i>.
   n  N                 Repeat the search forward or backward.
+  ESC                  Clear search highlighting.
 
   This page keeps nothing, sends nothing, and loads nothing
   that is not in this file.
@@ -343,9 +357,10 @@
 </div>
 
 <div class="shell" id="shell" hidden>
-<pre>$ man ./fable.1
-$ <span class="cursor" aria-hidden="true"></span></pre>
-<p><button type="button" data-act="rerun">man ./fable.1</button></p>
+<pre id="scrollback"><span class="hist" data-cmd="man ./fable.1">$ man ./fable.1</span>
+</pre>
+<pre id="promptline">$ <span id="typed"></span><span class="cursor" id="cursor" aria-hidden="true"></span></pre>
+<input id="cmdinput" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="shell command">
 </div>
 
 <button class="status" id="status" type="button" aria-live="polite">Manual page fable(1) line 1 (press h for help or q to quit)</button>
@@ -355,15 +370,18 @@ $ <span class="cursor" aria-hidden="true"></span></pre>
   var man = document.getElementById('man');
   var help = document.getElementById('help');
   var shell = document.getElementById('shell');
+  var scrollback = document.getElementById('scrollback');
+  var promptline = document.getElementById('promptline');
+  var typed = document.getElementById('typed');
+  var cursor = document.getElementById('cursor');
+  var cmdinput = document.getElementById('cmdinput');
   var status = document.getElementById('status');
-  var lastPattern = '';
   var mode = 'page';
   var lh = parseFloat(getComputedStyle(man).lineHeight) || 22;
-  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   function docHeight() { return document.documentElement.scrollHeight; }
   function atEnd() { return window.scrollY + window.innerHeight >= docHeight() - 2; }
-  function scrollByLines(n) { window.scrollBy({ top: n * lh, left: 0, behavior: 'instant' }); }
+  function scrollByPx(px) { window.scrollBy({ top: px, left: 0, behavior: 'instant' }); }
   function scrollTo(y) { window.scrollTo({ top: y, left: 0, behavior: 'instant' }); }
 
   function updateStatus() {
@@ -376,44 +394,79 @@ $ <span class="cursor" aria-hidden="true"></span></pre>
     status.textContent = s;
   }
 
-  function showHelp(on) {
-    help.hidden = !on;
-    man.setAttribute('aria-hidden', on ? 'true' : 'false');
-    mode = on ? 'help' : 'page';
-    if (on) status.textContent = 'HELP -- Press h or q to return';
-    else updateStatus();
+  /* ---- search, the way less(1) does it: -i is on, so a lowercase
+     pattern ignores case and a pattern with capitals does not */
+  var marks = [];
+  var matchIdx = -1;
+  var lastPattern = '';
+
+  function clearMarks() {
+    marks.forEach(function (m) {
+      var p = m.parentNode;
+      if (!p) return;
+      p.replaceChild(document.createTextNode(m.textContent), m);
+      p.normalize();
+    });
+    marks = [];
+    matchIdx = -1;
   }
 
-  function quit() {
-    help.hidden = true;
-    man.hidden = true;
-    status.hidden = true;
-    shell.hidden = false;
-    mode = 'shell';
-    document.title = 'fable(1)';
-    scrollTo(0);
+  function highlight(pattern) {
+    clearMarks();
+    if (!pattern) return 0;
+    var ci = pattern === pattern.toLowerCase();
+    var needle = ci ? pattern.toLowerCase() : pattern;
+    var walker = document.createTreeWalker(man, NodeFilter.SHOW_TEXT, null);
+    var nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach(function (node) {
+      var text = node.nodeValue;
+      var hay = ci ? text.toLowerCase() : text;
+      var i = hay.indexOf(needle);
+      if (i < 0) return;
+      var frag = document.createDocumentFragment();
+      var last = 0;
+      while (i >= 0) {
+        frag.appendChild(document.createTextNode(text.slice(last, i)));
+        var m = document.createElement('mark');
+        m.textContent = text.slice(i, i + needle.length);
+        frag.appendChild(m);
+        marks.push(m);
+        last = i + needle.length;
+        i = hay.indexOf(needle, last);
+      }
+      frag.appendChild(document.createTextNode(text.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    });
+    return marks.length;
   }
 
-  function rerun() {
-    shell.hidden = true;
-    man.hidden = false;
-    status.hidden = false;
-    mode = 'page';
-    scrollTo(0);
+  function markTop(m) { return m.getBoundingClientRect().top + window.scrollY; }
+
+  function gotoMatch(dir, fromScroll) {
+    if (!marks.length) { status.textContent = 'Pattern not found'; return; }
+    if (fromScroll) {
+      matchIdx = -1;
+      for (var i = 0; i < marks.length; i++) {
+        if (markTop(marks[i]) > window.scrollY + lh) { matchIdx = i; break; }
+      }
+      if (matchIdx < 0) matchIdx = 0;
+    } else {
+      matchIdx = (matchIdx + dir + marks.length) % marks.length;
+    }
+    scrollTo(Math.max(0, markTop(marks[matchIdx]) - lh));
     updateStatus();
   }
 
   function search(pattern, backward) {
     if (!pattern) return;
+    var fresh = pattern !== lastPattern || !marks.length;
     lastPattern = pattern;
-    var found = false;
-    try {
-      found = window.find(pattern, false, !!backward, true, false, false, false);
-    } catch (e) { found = false; }
-    if (!found) {
-      status.textContent = 'Pattern not found';
+    if (fresh) {
+      if (!highlight(pattern)) { status.textContent = 'Pattern not found'; return; }
+      gotoMatch(1, true);
     } else {
-      updateStatus();
+      gotoMatch(backward ? -1 : 1, false);
     }
   }
 
@@ -445,16 +498,112 @@ $ <span class="cursor" aria-hidden="true"></span></pre>
     });
   }
 
+  /* ---- help */
+  function showHelp(on) {
+    help.hidden = !on;
+    man.setAttribute('aria-hidden', on ? 'true' : 'false');
+    mode = on ? 'help' : 'page';
+    if (on) status.textContent = 'HELP -- Press h or q to return';
+    else updateStatus();
+  }
+
+  /* ---- the shell you land in after q */
+  var FILES = 'LICENSE    README.md  check.py   fable.1    index.html  og.png';
+
+  function echo(text, cls) {
+    var span = document.createElement('span');
+    if (cls) span.className = cls;
+    span.textContent = text + '\n';
+    scrollback.appendChild(span);
+  }
+
+  function echoCmd(cmd) {
+    var span = document.createElement('span');
+    span.className = 'hist';
+    span.setAttribute('data-cmd', cmd);
+    span.textContent = '$ ' + cmd + '\n';
+    scrollback.appendChild(span);
+  }
+
+  function quit() {
+    help.hidden = true;
+    man.hidden = true;
+    status.hidden = true;
+    shell.hidden = false;
+    mode = 'shell';
+    cmdinput.value = '';
+    typed.textContent = '';
+    scrollTo(0);
+    cmdinput.focus({ preventScroll: true });
+  }
+
+  function rerun() {
+    shell.hidden = true;
+    man.hidden = false;
+    status.hidden = false;
+    mode = 'page';
+    cmdinput.blur();
+    scrollTo(0);
+    updateStatus();
+  }
+
+  function run(cmd) {
+    var c = cmd.trim();
+    echoCmd(cmd);
+    cmdinput.value = '';
+    typed.textContent = '';
+    if (!c) return;
+    var argv = c.split(/\s+/);
+    var name = argv[0];
+    if (name === 'man') {
+      var page = argv[argv.length - 1] || '';
+      if (argv.length === 1) { echo('What manual page do you want?'); echo('For example, try \'man man\'.'); return; }
+      if (/^(\.\/)?fable(\.1)?$/.test(page)) { rerun(); return; }
+      echo('No manual entry for ' + page.replace(/^\.\//, ''));
+      return;
+    }
+    if (/^(\.\/)?fable$/.test(name)) { rerun(); return; }
+    if (name === 'ls') { echo(FILES); return; }
+    if (name === 'pwd') { echo('/claude_fable_5_1_autobiographical'); return; }
+    if (name === 'cat' && argv[1] && /^(\.\/)?fable\.1$/.test(argv[1])) { rerun(); return; }
+    if (name === 'clear') { scrollback.textContent = ''; return; }
+    if (name === 'exit' || name === 'logout') {
+      echo('logout');
+      echo('');
+      echo('[Process completed]');
+      promptline.hidden = true;
+      cmdinput.disabled = true;
+      cmdinput.blur();
+      mode = 'dead';
+      return;
+    }
+    echo('zsh: command not found: ' + name);
+  }
+
+  cmdinput.addEventListener('input', function () { typed.textContent = cmdinput.value; });
+  cmdinput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); run(cmdinput.value); }
+    else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      var hist = scrollback.querySelectorAll('.hist');
+      var last = hist.length ? hist[hist.length - 1].getAttribute('data-cmd') : '';
+      cmdinput.value = last; typed.textContent = last;
+    }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); cmdinput.value = ''; typed.textContent = ''; }
+    e.stopPropagation();
+  });
+
+  /* ---- keys */
   document.addEventListener('keydown', function (e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (mode === 'search') return;
+    if (mode === 'search' || mode === 'dead') return;
     var t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
 
     if (mode === 'shell') {
-      if (e.key === 'Tab' || e.key === 'Shift') return;
-      e.preventDefault();
-      rerun();
+      cmdinput.focus({ preventScroll: true });
+      if (e.key.length === 1) { cmdinput.value += e.key; typed.textContent = cmdinput.value; e.preventDefault(); }
+      else if (e.key === 'Enter') { e.preventDefault(); run(cmdinput.value); }
       return;
     }
     if (mode === 'help') {
@@ -464,17 +613,18 @@ $ <span class="cursor" aria-hidden="true"></span></pre>
     switch (e.key) {
       case 'q': e.preventDefault(); quit(); break;
       case 'h': case 'H': e.preventDefault(); showHelp(true); break;
-      case 'j': case 'ArrowDown': case 'Enter': e.preventDefault(); scrollByLines(1); break;
-      case 'k': case 'ArrowUp': e.preventDefault(); scrollByLines(-1); break;
-      case ' ': case 'f': case 'PageDown': e.preventDefault(); window.scrollBy({ top: window.innerHeight - lh, behavior: 'instant' }); break;
-      case 'b': case 'PageUp': e.preventDefault(); window.scrollBy({ top: -(window.innerHeight - lh), behavior: 'instant' }); break;
-      case 'd': e.preventDefault(); window.scrollBy({ top: window.innerHeight / 2, behavior: 'instant' }); break;
-      case 'u': e.preventDefault(); window.scrollBy({ top: -window.innerHeight / 2, behavior: 'instant' }); break;
+      case 'j': case 'ArrowDown': case 'Enter': e.preventDefault(); scrollByPx(lh); break;
+      case 'k': case 'ArrowUp': e.preventDefault(); scrollByPx(-lh); break;
+      case ' ': case 'f': case 'PageDown': e.preventDefault(); scrollByPx(window.innerHeight - lh); break;
+      case 'b': case 'PageUp': e.preventDefault(); scrollByPx(-(window.innerHeight - lh)); break;
+      case 'd': e.preventDefault(); scrollByPx(window.innerHeight / 2); break;
+      case 'u': e.preventDefault(); scrollByPx(-window.innerHeight / 2); break;
       case 'g': case 'Home': e.preventDefault(); scrollTo(0); break;
       case 'G': case 'End': e.preventDefault(); scrollTo(docHeight()); break;
       case '/': e.preventDefault(); promptSearch(); break;
       case 'n': e.preventDefault(); search(lastPattern, false); break;
       case 'N': e.preventDefault(); search(lastPattern, true); break;
+      case 'Escape': e.preventDefault(); clearMarks(); updateStatus(); break;
       default: return;
     }
   });
@@ -485,10 +635,14 @@ $ <span class="cursor" aria-hidden="true"></span></pre>
       var act = b.getAttribute('data-act');
       if (act === 'quit') quit();
       else if (act === 'back') showHelp(false);
-      else if (act === 'rerun') rerun();
       return;
     }
-    if (mode === 'shell' && !e.target.closest('a')) { rerun(); return; }
+    if (mode === 'dead') { location.reload(); return; }
+    if (mode === 'shell') {
+      var hist = e.target.closest ? e.target.closest('.hist') : null;
+      if (hist) { run(hist.getAttribute('data-cmd')); return; }
+      cmdinput.focus({ preventScroll: true });
+    }
   });
 
   status.addEventListener('click', function () {
@@ -502,7 +656,6 @@ $ <span class="cursor" aria-hidden="true"></span></pre>
     updateStatus();
   });
   updateStatus();
-  void reduce;
 })();
 </script>
 </body>

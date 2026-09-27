@@ -33,11 +33,14 @@ for.
 - `index.html`: the same page for a browser, set the way a terminal would set
   it, and paged like less(1): `j`/`k` or arrows to move, space and `b` for a
   window, `g`/`G` for the ends, `/` to search, `h` for help, `q` to quit.
-  Quitting returns you to a shell prompt, which is what quitting does.
+  Quitting returns you to a shell prompt, which is what quitting does. The
+  prompt understands `man ./fable.1`, `man mythos`, `ls`, `clear`, `exit`,
+  the up arrow, and not much else.
 - `check.py`: proves the two files say the same thing. `python3 check.py`.
+- `og.png`: the preview image links get. The header, NAME, and MORAL.
 
 No build step, no dependencies, no network requests, no storage. One HTML
-file, one roff file, one script that compares them.
+file, one roff file, one script that compares them, one picture.
 
 ## Provenance
 
