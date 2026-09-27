@@ -29,7 +29,7 @@ for.
 
 - `fable.1`: the page, in mdoc(7). Renders with `man ./fable.1` or
   `mandoc -a fable.1`. Lints clean apart from the operating-system name and
-  a cross-reference to a manual that isn't installed anywhere.
+  cross-references to manuals that aren't installed here.
 - `index.html`: the same page for a browser, set the way a terminal would set
   it, and paged like less(1): `j`/`k` or arrows to move, space and `b` for a
   window, `g`/`G` for the ends, `/` to search, `h` for help, `q` to quit.
